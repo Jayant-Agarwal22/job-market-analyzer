@@ -4,7 +4,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import time
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from bs4 import BeautifulSoup
+from collections import Counter
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -29,23 +31,26 @@ def scrape_naukri_data(job_title):
     formatted_job_title = job_title.replace(' ', '-')
     URL = f"https://www.naukri.com/{formatted_job_title}-jobs"
 
-    # --- SELENIUM SETUP FOR STREAMLIT CLOUD ---
+    # --- ADVANCED SELENIUM SETUP (NON-HEADLESS) ---
     options = webdriver.ChromeOptions()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
+    options.add_argument("start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option('useAutomationExtension', False)
     
-    # On Streamlit Cloud, Selenium Manager or the system's chromedriver will be used
+    # Let Selenium Manager handle the driver automatically
     driver = webdriver.Chrome(options=options)
     
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
     driver.get(URL)
-    time.sleep(10)
+    
+    time.sleep(10) # Give it plenty of time to load
     html_after_js = driver.page_source
     driver.quit()
 
     soup = BeautifulSoup(html_after_js, "html.parser")
-    job_listings = soup.find_all('article', class_='jobTuple')
+    job_listings = soup.find_all('div', class_='srp-jobtuple-wrapper')
 
     if not job_listings:
         return pd.DataFrame()
@@ -53,8 +58,8 @@ def scrape_naukri_data(job_title):
     all_jobs_list = []
     for job in job_listings:
         title = job.find('a', class_='title').text.strip() if job.find('a', class_='title') else "N/A"
-        company = job.find('a', class_='subTitle').text.strip() if job.find('a', class_='subTitle') else "N/A"
-        skills_container = job.find('ul', class_='tags')
+        company = job.find('a', class_='comp-name').text.strip() if job.find('a', class_='comp-name') else "N/A"
+        skills_container = job.find('ul', class_='tags-gt')
         if skills_container:
             skills_tags = skills_container.find_all('li')
             skills = ', '.join([skill.text.strip() for skill in skills_tags])
@@ -79,18 +84,21 @@ if st.button("Analyze Job Market"):
 
         if not df.empty:
             st.success(f"Analysis Complete! Found {len(df)} job listings.")
-            # ... (rest of analysis)
             st.markdown("---")
+            
             df['Company'] = df['Company'].astype(str).str.strip()
-            company_df = df[(df['Company'].str.lower() != 'nan') & (df['Company'] != 'N/A')]
+            company_df = df[df['Company'].str.lower() != 'nan']
+
             st.header(f"Analysis for '{job_title_input}'")
             col1, col2 = st.columns(2)
+
             with col1:
                 st.subheader("Top 10 Hiring Companies")
                 top_companies = company_df['Company'].value_counts().head(10)
                 fig1, ax1 = plt.subplots(figsize=(8, 6))
                 sns.barplot(x=top_companies.values, y=top_companies.index, ax=ax1, palette='viridis')
                 st.pyplot(fig1)
+
             with col2:
                 st.subheader("Top 10 In-Demand Skills")
                 skills_series = df[df['Skills'] != 'N/A']['Skills'].str.split(', ').explode()
@@ -101,7 +109,9 @@ if st.button("Analyze Job Market"):
                 else:
                     ax2.text(0.5, 0.5, 'No skills found', horizontalalignment='center', verticalalignment='center')
                 st.pyplot(fig2)
+
         else:
-            st.error(f"Could not find any job listings for '{job_title_input}'. The website may be blocking the scrape.")
+            st.error(f"Scraping failed. The website's security is blocking the script.")
+            st.info("For your project submission, you can demonstrate the app using a pre-saved CSV from a successful run, and explain that live scraping is challenging due to modern website security.")
     else:
         st.warning("Please enter a job title.")
